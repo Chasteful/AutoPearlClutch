@@ -1,5 +1,3 @@
-Here's a comprehensive GitHub README for your AutoClutch module:
-
 # AutoClutch Module
 
 An intelligent ender pearl clutch module that uses simulated annealing to find optimal throwing angles for survival in dangerous situations.
