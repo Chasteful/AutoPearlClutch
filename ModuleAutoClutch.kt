@@ -8,17 +8,16 @@ import net.ccbluex.liquidbounce.event.events.*
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.ClientModule
-import net.ccbluex.liquidbounce.features.module.modules.misc.ModuleEasyPearl.getTargetRotation
 import net.ccbluex.liquidbounce.features.module.modules.movement.ModuleAirJump
 import net.ccbluex.liquidbounce.features.module.modules.movement.ModuleFreeze
 import net.ccbluex.liquidbounce.features.module.modules.movement.fly.ModuleFly
 import net.ccbluex.liquidbounce.features.module.modules.world.scaffold.ModuleScaffold
-import net.ccbluex.liquidbounce.render.*
 import net.ccbluex.liquidbounce.render.engine.type.Color4b
+import net.ccbluex.liquidbounce.render.renderEnvironmentForWorld
+import net.ccbluex.liquidbounce.render.withDisabledCull
 import net.ccbluex.liquidbounce.utils.aiming.RotationManager
 import net.ccbluex.liquidbounce.utils.aiming.RotationsConfigurable
 import net.ccbluex.liquidbounce.utils.aiming.data.Rotation
-import net.ccbluex.liquidbounce.utils.block.getState
 import net.ccbluex.liquidbounce.utils.client.notification
 import net.ccbluex.liquidbounce.utils.client.sendPacketSilently
 import net.ccbluex.liquidbounce.utils.combat.CombatManager
@@ -28,10 +27,11 @@ import net.ccbluex.liquidbounce.utils.inventory.HotbarItemSlot
 import net.ccbluex.liquidbounce.utils.inventory.Slots
 import net.ccbluex.liquidbounce.utils.inventory.useHotbarSlotOrOffhand
 import net.ccbluex.liquidbounce.utils.kotlin.Priority
-import net.ccbluex.liquidbounce.utils.math.*
+import net.ccbluex.liquidbounce.utils.math.plus
+import net.ccbluex.liquidbounce.utils.math.times
+import net.ccbluex.liquidbounce.utils.math.toBlockPos
+import net.ccbluex.liquidbounce.utils.math.toVec3d
 import net.ccbluex.liquidbounce.utils.movement.DirectionalInput
-import net.ccbluex.liquidbounce.utils.render.refreshRate
-import net.minecraft.block.BlockRenderType
 import net.minecraft.block.Blocks
 import net.minecraft.client.gl.ShaderProgramKeys
 import net.minecraft.client.render.BufferRenderer
@@ -50,13 +50,19 @@ import net.minecraft.util.ActionResult
 import net.minecraft.util.Hand
 import net.minecraft.util.Util
 import net.minecraft.util.hit.HitResult
-import net.minecraft.util.math.*
+import net.minecraft.util.math.BlockPos
+import net.minecraft.util.math.Box
+import net.minecraft.util.math.Direction
+import net.minecraft.util.math.Vec3d
 import net.minecraft.util.shape.VoxelShapes
 import net.minecraft.world.RaycastContext
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.*
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.sin
 import kotlin.random.Random
 
 @Suppress("TooManyFunctions", "unused")
@@ -69,7 +75,7 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
     private val algorithm by enumChoice("Algorithm", Algorithm.SimulatedAnnealing)
     private val adjacentSafeBlocks by int("AdjacentSafeBlocks", 0, 0..3)
     private val pitchRange by floatRange("PitchLimit", -90f..0f, -90f..45f)
-    private val voidEvasionFrequency by int("VoidEvasionFrequency", 14, 5..refreshRate)
+    private val voidEvasionFrequency by int("VoidEvasionFrequency", 14, 5..20)
     private val voidThreshold by int("VoidLevel", 0, -256..0)
     private val maxIterations by int("MaxIterations", 500, 50..10000)
     private val stagnationLimit by int("StagnationLimit", 2333, 1000..10000)
@@ -612,7 +618,7 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
             motion = motion * drag
             motion = motion.add(0.0, -0.03, 0.0)
 
-            // Block collision check
+
             val blockHitResult = mc.world!!.raycast(
                 RaycastContext(
                     pos, newPos,
@@ -633,7 +639,7 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
                     entity
                 )
             }
-            // Check block collisions with nearby full cubes
+
             val blockPos = newPos.toBlockPos()
             val directions = listOf(Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST)
             for (dir in directions) {
@@ -653,17 +659,16 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
                 val state = world.getBlockState(blockPos)
                 // Ensure the position is not inside a solid block
                 if (state.isFullCube(world, blockPos) || !state.getCollisionShape(world, blockPos).isEmpty) {
-                    // Adjust position to the block's surface using the hit direction
+
                     val direction = blockHitResult.side
-                    val adjustedPos = hitPos.add(Vec3d.of(direction.vector).multiply(0.01)) // Small offset to surface
+                    val adjustedPos = hitPos.add(Vec3d.of(direction.vector).multiply(0.01))
                     return adjustedPos
                 }
                 return hitPos
             }
-// Existing entity collision and nearby full cube checks remain
 
             if (entityHitResult != null && entityHitResult.type != HitResult.Type.MISS) {
-                return entityHitResult.pos // Return entity hit position
+                return entityHitResult.pos
             }
 
             pos = newPos
@@ -803,7 +808,7 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
                 }
             }
 
-            // Find the nearest safe block to penalize distance appropriately
+
             val nearestSafeDistance = findNearestSafeBlock(pos)?.let { distanceSq2D(pos, it) } ?: 10000.0
 
             val xFrac = pos.x - pos.x.toInt()
@@ -811,15 +816,14 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
             val edgePenalty = if (abs(xFrac - 0.5) < 0.3 || abs(zFrac - 0.5) < 0.3) 500.0 else 0.0
 
             when {
-                !hasGround -> 5000.0 + nearestSafeDistance // Reduced penalty, prioritize nearest safe block
-                !allPositionsSafe -> 3000.0 + nearestSafeDistance // Reduced penalty
+                !hasGround -> 5000.0 + nearestSafeDistance
+                !allPositionsSafe -> 3000.0 + nearestSafeDistance
                 safeBlockCount < adjacentSafeBlocks -> 1000.0 + nearestSafeDistance - safeBlockCount * 50.0
                 else -> nearestSafeDistance + edgePenalty - safeBlockCount * 100.0
             }
         }
     }
 
-    // Helper function to find the nearest safe block
     private fun findNearestSafeBlock(pos: Vec3d): Vec3d? {
         val searchRadius = 50
         val blockPos = pos.toBlockPos()
@@ -883,7 +887,7 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
                         provider = this
                     )
                 }
-                // Transition to THROWING when server rotation is confirmed
+
                 if (RotationManager.serverRotation.angleTo(sol) <= aimPrecision) {
                     state = State.THROWING
                 }
