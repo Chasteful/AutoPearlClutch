@@ -73,25 +73,27 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
         SimulatedAnnealing("SimulatedAnnealing")
     }
     private val algorithm by enumChoice("Algorithm", Algorithm.SimulatedAnnealing)
-    private val adjacentSafeBlocks by int("AdjacentSafeBlocks", 0, 0..3)
-    private val pitchRange by floatRange("PitchLimit", -90f..0f, -90f..45f)
+
     private val voidEvasionFrequency by int("VoidEvasionFrequency", 14, 5..20)
     private val voidThreshold by int("VoidLevel", 0, -256..0)
-    private val maxIterations by int("MaxIterations", 500, 50..10000)
+    private val maxIterations by int("MaxIterations", 5000, 50..10000)
     private val stagnationLimit by int("StagnationLimit", 2333, 1000..10000)
+    private val coolingFactor by float("CoolingFactor", 0.97f, 0.95f..0.99f)
     private val iterationSpeed by float("IterationsSpeed", 5f, 1f..50f)
     private val initialTemperature by float("InitialTemp", 20f, 5f..50f)
     private val minTemperature by float("MinTemperature", 0.01f, 0.01f..0.1f)
-    private val coolingFactor by float("CoolingFactor", 0.97f, 0.95f..0.99f)
-    private val aimPrecision by float("AimPrecision", 0.1f, 0.1f..1f)
-    private var avgCalcTime by float("AverageCalcTime", 0.1f, 0.01f..0.15f)
     private var maxCacheSize by int("MaxCacheSize", 1337, 500..1500)
+    private val aimPrecision by float("AimPrecision", 0.1f, 0.1f..1f)
+    private val pitchRange by floatRange("PitchLimit", -90f..0f, -90f..45f)
+    private val adjacentSafeBlocks by int("AdjacentSafeBlocks", 0, 0..3)
+    private var avgCalcTime by float("AverageCalcTime", 0.1f, 0.01f..0.15f)
     private val simulateTime by int("SimulationTime", 30, 30..50, "ticks")
-    private var cooldownTicks by int("Cooldown", 0, 0..20, "ticks")
+    private var cooldownTicks by int("PauseOnFinish", 0, 0..20, "ticks")
     private val allowClutchWithStuck by boolean("AllowClutchWithStuck", true)
     private val checkHeadSpace by boolean("EnsureHeadSpace", true)
+    private val playerTrajectory by boolean("PlayerTrajectory", true)
     private val onlyDuringCombat by boolean("OnlyDuringCombat", false)
-    private val playerTrajectory by boolean("PlayerTrajectory", false)
+
     private val defaultUnsafeBlocks = setOf(
         Blocks.WATER,
         Blocks.LAVA,
@@ -109,26 +111,27 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
     private val rotationConfig = tree(RotationsConfigurable(this))
 
     var state = State.IDLE
-    private var predictedThrowPosition: Vec3d? = null
+
     private val positionCache = ConcurrentHashMap<BlockPos, Double>()
-    private var bestEnergy = Double.MAX_VALUE
     private var currentSolution = Rotation(0f, 0f)
+    private var bestEnergy = Double.MAX_VALUE
     private var currentEnergy = Double.MAX_VALUE
     private var temperature = initialTemperature
     private var iterations = 0
     private var noImprovementCount = 0
-    private var lastPearlThrowTime = 0L
     private var safetyCheckCounter = 0
-    private var triggerPosition: Vec3d? = null
-    private var pearlSlot: HotbarItemSlot? = null
-    private var lastPlayerPosition: Vec3d? = null
-    private var bestSolution: Rotation? = null
-    private var isLikelyFallingIntoVoid = false
+    private var pearlThrowTick: Long = 0L
+    private var lastPearlThrowTime: Long = 0L
+    private var lastTrajectoryUpdate: Long = 0L
+    private var isPearlInFlight = false
     private var safetyCheckActive = false
     private var manualPearlThrown = false
-    private var lastTrajectoryUpdate: Long = 0
-    private var isPearlInFlight = false
-    private var pearlThrowTick: Long = 0L
+    private var isLikelyFallingIntoVoid = false
+    private var triggerPosition: Vec3d? = null
+    private var bestSolution: Rotation? = null
+    private var pearlSlot: HotbarItemSlot? = null
+    private var lastPlayerPosition: Vec3d? = null
+    private var predictedThrowPosition: Vec3d? = null
     private var cachedTrajectory: List<Pair<Vector3f, Color4b>>? = null
     private var lastPlayerState: Triple<Vec3d, Vec3d, DirectionalInput>? = null
     private val backgroundDone = AtomicBoolean(false)
