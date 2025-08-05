@@ -132,9 +132,15 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
     private var pearlSlot: HotbarItemSlot? = null
     private var lastPlayerPosition: Vec3d? = null
     private var predictedThrowPosition: Vec3d? = null
-    private var cachedTrajectory: List<Pair<Vector3f, Color4b>>? = null
+    private var cachedTrajectory: List<TrajectorySegment>? = null
     private var lastPlayerState: Triple<Vec3d, Vec3d, DirectionalInput>? = null
     private val backgroundDone = AtomicBoolean(false)
+    
+    data class TrajectorySegment(
+        val start: Vector3f,
+        val end: Vector3f,
+        val color: Color4b
+    )
 
     private fun shouldCalculateTrajectory(): Boolean {
         return !(onlyDuringCombat && !CombatManager.isInCombat)&&
@@ -144,6 +150,7 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
             !ModuleAirJump.running &&
             !ModuleFly.running
     }
+    
     private val tickHandler = handler<GameTickEvent> {
         if (!shouldCalculateTrajectory()) {
             clearTrajectoryAndCache()
@@ -160,6 +167,7 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
         checkPlayerMovement()
         checkVoidFall()
     }
+    
     private val interactedItemHandler = handler<PlayerInteractedItemEvent> { event ->
         if (event.actionResult != ActionResult.PASS &&
             event.player == mc.player &&
@@ -344,8 +352,10 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
 
                 cachedTrajectory?.let { segments ->
                     buffer.apply {
-                        for ((vec, color) in segments) {
-                            vertex(matrix, vec.x, vec.y, vec.z)
+                        for ((start, end, color) in segments) {
+                            vertex(matrix, start.x, start.y, start.z)
+                                .color(color.r / 255f, color.g / 255f, color.b / 255f, color.a / 255f)
+                            vertex(matrix, end.x, end.y, end.z)
                                 .color(color.r / 255f, color.g / 255f, color.b / 255f, color.a / 255f)
                         }
                         BufferRenderer.drawWithGlobalProgram(end())
@@ -365,19 +375,11 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
     private fun generateTrajectorySegments(
         points: List<Pair<Vec3d, Boolean>>,
         camera: Camera
-    ): List<Pair<Vector3f, Color4b>> {
-        val result = mutableListOf<Pair<Vector3f, Color4b>>()
+    ): List<TrajectorySegment> {
+        val result = mutableListOf<TrajectorySegment>()
         val segmentsPerTick = 5
 
-        if (points.size < 2) {
-            return points.map { (pos, isSafe) ->
-                Vector3f(
-                    (pos.x - camera.pos.x).toFloat(),
-                    (pos.y - camera.pos.y).toFloat() + 0.1f,
-                    (pos.z - camera.pos.z).toFloat()
-                ) to if (isSafe) Color4b(0x20, 0xC2, 0x06, 200) else Color4b(0xD7, 0x09, 0x09, 200)
-            }
-        }
+        if (points.size < 2) return emptyList()
 
         fun catmullRom(t: Float, p0: Vec3d, p1: Vec3d, p2: Vec3d, p3: Vec3d): Vec3d {
             val t2 = t * t
@@ -405,12 +407,19 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
             val isSafe1 = isSafeList[i]
             val isSafe2 = isSafeList[i + 1]
 
+            var last: Vector3f? = null
             for (j in 0..segmentsPerTick) {
                 val t = j / segmentsPerTick.toFloat()
-                val interpolatedPos = catmullRom(t, p0, p1, p2, p3)
+                val interpolated = catmullRom(t, p0, p1, p2, p3)
+                val rel = Vector3f(
+                    (interpolated.x - camera.pos.x).toFloat(),
+                    (interpolated.y - camera.pos.y).toFloat() + 0.1f,
+                    (interpolated.z - camera.pos.z).toFloat()
+                )
 
                 val color = if (isSafe1 == isSafe2) {
-                    if (isSafe1) Color4b(0x20, 0xC2, 0x06, 200) else Color4b(0xD7, 0x09, 0x09, 200)
+                    if (isSafe1) Color4b(0x20, 0xC2, 0x06, 200)
+                    else Color4b(0xD7, 0x09, 0x09, 200)
                 } else {
                     val colorT = t
                     val r = ((if (isSafe1) 0x20 else 0xD7) + ((if (isSafe2) 0x20 else 0xD7) - (if (isSafe1) 0x20 else 0xD7)) * colorT).toInt()
@@ -419,13 +428,10 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
                     Color4b(r, g, b, 200)
                 }
 
-                val relativePos = Vector3f(
-                    (interpolatedPos.x - camera.pos.x).toFloat(),
-                    (interpolatedPos.y - camera.pos.y).toFloat() + 0.1f,
-                    (interpolatedPos.z - camera.pos.z).toFloat()
-                )
-
-                result.add(relativePos to color)
+                if (last != null) {
+                    result.add(TrajectorySegment(last, rel, color))
+                }
+                last = rel
             }
         }
 
