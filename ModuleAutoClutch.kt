@@ -85,7 +85,7 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
     private val allowClutchWithStuck by boolean("AllowClutchWithStuck", true)
     private val checkHeadSpace by boolean("EnsureHeadSpace", true)
     private val onlyDuringCombat by boolean("OnlyDuringCombat", false)
-
+    private val playerTrajectory by boolean("PlayerTrajectory", false)
     private val defaultUnsafeBlocks = setOf(
         Blocks.WATER,
         Blocks.LAVA,
@@ -129,7 +129,7 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
 
     private fun shouldCalculateTrajectory(): Boolean {
         return !(onlyDuringCombat && !CombatManager.isInCombat)&&
-            !(ModuleAutoStuck.shouldEnableStuck && !allowClutchWithStuck) &&
+            !(ModuleAutoStuck.shouldActivate) &&
             !ModuleScaffold.running &&
             !ModuleFreeze.running &&
             !ModuleAirJump.running &&
@@ -282,65 +282,23 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
     }
 
     private val worldRenderHandler = handler<WorldRenderEvent> { event ->
-        if (!shouldCalculateTrajectory()) {
+        if (!shouldCalculateTrajectory() && !playerTrajectory ) {
             clearTrajectoryAndCache()
             return@handler
         }
-
-        if (player.mainHandStack.item == Items.ENDER_PEARL || player.offHandStack.item == Items.ENDER_PEARL) {
-            val matrixStack = event.matrixStack
-            // Use simulated pearl trajectory instead of crosshair position
-            val rotation = bestSolution ?: Rotation(player.yaw, player.pitch)
-            val landingPos = simulatePearlTrajectory(rotation) ?: return@handler
-            val blockPos = landingPos.toBlockPos()
-            val state = blockPos.getState() ?: return@handler
-            val belowPos = blockPos.down()
-            val belowState = world.getBlockState(belowPos)
-            val isSafeLanding = !belowState.isAir && belowState.block !in unsafeBlocks
-
-            renderEnvironmentForWorld(matrixStack) {
-                withDisabledCull {
-                    val color = if (isSafeLanding && getTargetRotation(landingPos) != null) {
-                        Color4b(0x20, 0xC2, 0x06) // Green
-                    } else {
-                        Color4b(0xD7, 0x09, 0x09) // Red
-                    }
-
-                    val baseColor = color.with(a = 50)
-                    val transparentColor = baseColor.with(a = 0)
-                    val outlineColor = color.with(a = 200)
-
-                    withPositionRelativeToCamera(landingPos.toBlockPos().toVec3d()) {
-                        if (state.renderType != BlockRenderType.MODEL && state.isAir) {
-                            withColor(baseColor) {
-                                drawSideBox(FULL_BOX, Direction.DOWN)
-                            }
-                            withColor(outlineColor) {
-                                drawSideBox(FULL_BOX, Direction.DOWN, onlyOutline = true)
-                            }
-                            drawGradientSides(0.7, baseColor, transparentColor, FULL_BOX)
-                        } else {
-                            withColor(baseColor) {
-                                drawSolidBox(FULL_BOX)
-                            }
-                            withColor(outlineColor) {
-                                drawOutlinedBox(FULL_BOX)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         drawPlayerTrajectory(event.matrixStack)
     }
 
     private fun drawPlayerTrajectory(matrixStack: MatrixStack) {
-        if (!shouldCalculateTrajectory()) {
+        if (!playerTrajectory) {
             clearTrajectoryAndCache()
             return
         }
 
+        if (!shouldCalculateTrajectory()) {
+            clearTrajectoryAndCache()
+            return
+        }
         val currentTime = System.currentTimeMillis()
         val camera = mc.entityRenderDispatcher.camera ?: return
         val playerState = Triple(player.pos, player.velocity, DirectionalInput(player.input))
@@ -678,22 +636,31 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
             // Check block collisions with nearby full cubes
             val blockPos = newPos.toBlockPos()
             val directions = listOf(Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST)
-            var hit = false
             for (dir in directions) {
                 val nearby = blockPos.offset(dir)
                 val state = world.getBlockState(nearby)
                 if (!state.isAir && state.isFullCube(world, nearby)) {
                     val collisionBox = state.getCollisionShape(world, nearby).boundingBox.offset(nearby)
                     if (collisionBox.contains(newPos)) {
-                        hit = true
                         break
                     }
                 }
             }
 
-            if (blockHitResult != null && blockHitResult.type != HitResult.Type.MISS || hit) {
-                return blockHitResult?.pos ?: newPos
+            if (blockHitResult != null && blockHitResult.type != HitResult.Type.MISS) {
+                val hitPos = blockHitResult.pos
+                val blockPos = blockHitResult.blockPos
+                val state = world.getBlockState(blockPos)
+                // Ensure the position is not inside a solid block
+                if (state.isFullCube(world, blockPos) || !state.getCollisionShape(world, blockPos).isEmpty) {
+                    // Adjust position to the block's surface using the hit direction
+                    val direction = blockHitResult.side
+                    val adjustedPos = hitPos.add(Vec3d.of(direction.vector).multiply(0.01)) // Small offset to surface
+                    return adjustedPos
+                }
+                return hitPos
             }
+// Existing entity collision and nearby full cube checks remain
 
             if (entityHitResult != null && entityHitResult.type != HitResult.Type.MISS) {
                 return entityHitResult.pos // Return entity hit position
@@ -771,11 +738,16 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
 
     private fun assessPosition(pos: Vec3d): Double {
         if (!shouldCalculateTrajectory()) return Double.MAX_VALUE
+
         val blockPos = BlockPos(pos.x.toInt(), (pos.y - 0.5).toInt(), pos.z.toInt())
         val maxThrowDistance = 50.0
         val horizontalDistance = distanceSq2D(pos, triggerPosition ?: player.pos)
         if (horizontalDistance > maxThrowDistance * maxThrowDistance) {
             return Double.MAX_VALUE
+        }
+        val blockState = world.getBlockState(blockPos)
+        if (blockState.isFullCube(world, blockPos) || !blockState.getCollisionShape(world, blockPos).isEmpty) {
+            return Double.MAX_VALUE // Penalize positions inside solid blocks
         }
         return positionCache.computeIfAbsent(blockPos) { _ ->
             val belowPos = blockPos.down()
