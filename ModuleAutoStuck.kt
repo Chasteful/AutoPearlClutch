@@ -1,6 +1,7 @@
-package net.ccbluex.jmcomicfix.features.module.modules.world.stuck
+@file:Suppress("detekt:TooManyFunctions")
+package net.ccbluex.liquidbounce.features.module.modules.player
 
-import net.ccbluex.liquidbounce.config.types.ToggleableConfigurable
+import net.ccbluex.liquidbounce.config.types.nesting.ToggleableConfigurable
 import net.ccbluex.liquidbounce.event.events.MovementInputEvent
 import net.ccbluex.liquidbounce.event.events.PacketEvent
 import net.ccbluex.liquidbounce.event.events.WorldChangeEvent
@@ -20,7 +21,6 @@ import net.minecraft.util.math.BlockPos
 import kotlin.math.ceil
 import kotlin.math.floor
 
-@Suppress("TooManyFunctions")
 object ModuleAutoStuck : ClientModule("AutoStuck", Category.WORLD) {
 
     private val resetTicks by int("ResetTicks", 300, 200..500, "ticks")
@@ -45,6 +45,7 @@ object ModuleAutoStuck : ClientModule("AutoStuck", Category.WORLD) {
 
     var isInAir = false
     var shouldEnableStuck = false
+    var shouldActivate = false
 
     private fun hasPearlInHotbar() =
         player.inventory.main.any { it?.item == Items.ENDER_PEARL }
@@ -71,8 +72,15 @@ object ModuleAutoStuck : ClientModule("AutoStuck", Category.WORLD) {
                 is PlayerInteractItemC2SPacket -> {
                     event.cancelEvent()
                     sendPacketSilently(
-                        PlayerMoveC2SPacket.LookAndOnGround(player.yaw, player.pitch, player.isOnGround, player.horizontalCollision))
-                    sendPacketSilently(PlayerInteractItemC2SPacket(event.packet.hand, event.packet.sequence, player.yaw, player.pitch))
+                        PlayerMoveC2SPacket.LookAndOnGround(
+                            player.yaw, player.pitch, player.isOnGround, player.horizontalCollision
+                        )
+                    )
+                    sendPacketSilently(
+                        PlayerInteractItemC2SPacket(
+                            event.packet.hand, event.packet.sequence, player.yaw, player.pitch
+                        )
+                    )
                 }
             }
         } else if (isInAir) {
@@ -121,11 +129,12 @@ object ModuleAutoStuck : ClientModule("AutoStuck", Category.WORLD) {
 
         return (xMin..xMax).any { dx ->
             (zMin..zMax).any { dz ->
-                val yRange = if (voidDistance == -1)
+                val yRange = if (voidDistance == -1) {
                     LOWEST_Y..lastGroundY
-                else
+                }
+                else {
                     (lastGroundY - voidDistance).coerceAtLeast(LOWEST_Y)..lastGroundY
-
+                }
                 yRange.all { y ->
                     BlockPos(player.x.toInt() + dx, y, player.z.toInt() + dz)
                         .getBlock()
@@ -157,7 +166,7 @@ object ModuleAutoStuck : ClientModule("AutoStuck", Category.WORLD) {
 
         if (!StuckSettings.enabled) return@tickHandler
 
-        val shouldActivate =
+        shouldActivate =
             (!StuckSettings.stuckOnlyVoid || aboveVoid()) &&
                 (!StuckSettings.onlyDuringCombat || CombatManager.isInCombat) &&
                 (!StuckSettings.stuckOnlyPearl || hasPearlInHotbar()) &&
