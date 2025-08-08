@@ -864,7 +864,6 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
     private fun rotateToSolution() {
         if (allowClutchWithStuck) {
             ModuleAutoStuck.shouldEnableStuck = true
-            mc.options.forwardKey.isPressed = false
         }
 
         if (bestSolution == null || bestEnergy >= 10000.0) {
@@ -887,13 +886,10 @@ object ModuleAutoClutch : ClientModule("AutoClutch", Category.PLAYER) {
         if (!mc.options.pickItemKey.isPressed) {
             bestSolution?.let { sol ->
 
-                if (allowClutchWithStuck) {
+                 if (allowClutchWithStuck) {
                     sendPacketSilently(
                         PlayerMoveC2SPacket.LookAndOnGround(
-                            sol.yaw,
-                            sol.pitch,
-                            mc.player?.isOnGround ?: true,
-                            mc.player?.horizontalCollision ?: false
+                            sol.yaw, sol.pitch, player.isOnGround, player.horizontalCollision
                         )
                     )
                 }
