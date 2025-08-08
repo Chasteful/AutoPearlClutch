@@ -50,14 +50,22 @@ object ModuleAutoStuck : ClientModule("AutoStuck", Category.WORLD) {
     private fun hasPearlInHotbar() =
         player.inventory.main.any { it?.item == Items.ENDER_PEARL }
 
+
     @Suppress("unused")
     private val movementInputEventHandler = handler<MovementInputEvent> {
         if (shouldEnableStuck) {
             player.movement.x = 0.0
             player.movement.y = 0.0
             player.movement.z = 0.0
+            it.directionalInput = DirectionalInput(
+                forwards = false,
+                backwards = false,
+                left = false,
+                right = false
+            )
         }
     }
+
 
     @Suppress("unused")
     private val packetEventHandler = handler<PacketEvent> { event ->
